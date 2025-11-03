@@ -5,62 +5,92 @@
     
     
       
-      <testcase classname="fastlane.lanes" name="00: default_platform" time="0.000219">
+      <testcase classname="fastlane.lanes" name="00: default_platform" time="0.000184">
         
       </testcase>
     
       
-      <testcase classname="fastlane.lanes" name="01: setup_ci" time="9.9e-05">
+      <testcase classname="fastlane.lanes" name="01: setup_ci" time="9.1e-05">
         
       </testcase>
     
       
-      <testcase classname="fastlane.lanes" name="02: match" time="2.489907">
+      <testcase classname="fastlane.lanes" name="02: match" time="7.247165">
         
       </testcase>
     
       
-      <testcase classname="fastlane.lanes" name="03: automatic_code_signing" time="0.02381">
+      <testcase classname="fastlane.lanes" name="03: automatic_code_signing" time="0.022704">
         
       </testcase>
     
       
-      <testcase classname="fastlane.lanes" name="04: increment_build_number" time="0.205215">
+      <testcase classname="fastlane.lanes" name="04: increment_build_number" time="0.182392">
         
       </testcase>
     
       
-      <testcase classname="fastlane.lanes" name="05: get_version_number" time="0.006248">
+      <testcase classname="fastlane.lanes" name="05: get_version_number" time="0.005763">
         
       </testcase>
     
       
-      <testcase classname="fastlane.lanes" name="06: get_build_number" time="0.063801">
+      <testcase classname="fastlane.lanes" name="06: get_build_number" time="0.046392">
         
       </testcase>
     
       
-      <testcase classname="fastlane.lanes" name="07: flutter --version" time="0.389646">
+      <testcase classname="fastlane.lanes" name="07: flutter --version" time="0.422042">
         
       </testcase>
     
       
-      <testcase classname="fastlane.lanes" name="08: flutter clean" time="1.693686">
+      <testcase classname="fastlane.lanes" name="08: flutter clean" time="1.587012">
         
       </testcase>
     
       
-      <testcase classname="fastlane.lanes" name="09: flutter pub get" time="0.691055">
+      <testcase classname="fastlane.lanes" name="09: flutter pub get" time="0.686093">
         
       </testcase>
     
       
-      <testcase classname="fastlane.lanes" name="10: flutter build ipa --release" time="29.003303">
+      <testcase classname="fastlane.lanes" name="10: flutter build ipa --release" time="27.727599">
         
       </testcase>
     
       
-      <testcase classname="fastlane.lanes" name="11: app_store_connect_api_key" time="0.003097">
+      <testcase classname="fastlane.lanes" name="11: git -C /Users/huntsolo/repo/profisea/Paybox/flutter/hello_ios_tf rev-parse --short HEAD" time="0.027037">
+        
+      </testcase>
+    
+      
+      <testcase classname="fastlane.lanes" name="12: app_store_connect_api_key" time="0.001743">
+        
+      </testcase>
+    
+      
+      <testcase classname="fastlane.lanes" name="13: pilot" time="217.802204">
+        
+      </testcase>
+    
+      
+      <testcase classname="fastlane.lanes" name="14: git -C /Users/huntsolo/repo/profisea/Paybox/flutter/hello_ios_tf config user.email || git -C /Users/huntsolo/repo/profisea/Paybox/flutter/hello_ios_tf config user.email &apos;ci@local&apos;" time="0.037647">
+        
+      </testcase>
+    
+      
+      <testcase classname="fastlane.lanes" name="15: git -C /Users/huntsolo/repo/profisea/Paybox/flutter/hello_ios_tf config user.name  || git -C /Users/huntsolo/repo/profisea/Paybox/flutter/hello_ios_tf config user.name  &apos;CI&apos;" time="0.027689">
+        
+      </testcase>
+    
+      
+      <testcase classname="fastlane.lanes" name="16: git -C /Users/huntsolo/repo/profisea/Paybox/flutter/hello_ios_tf tag -a ios-v1.0.0-b5 -m fastlane\ ios\ beta\ v1.0.0\ \(5\) || true" time="0.02761">
+        
+      </testcase>
+    
+      
+      <testcase classname="fastlane.lanes" name="17: git -C /Users/huntsolo/repo/profisea/Paybox/flutter/hello_ios_tf push origin ios-v1.0.0-b5 || true" time="1.992667">
         
       </testcase>
     
