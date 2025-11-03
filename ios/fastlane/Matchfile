@@ -1,0 +1,4 @@
+git_url("git@github.com:huntsolo/ios-signing.git")
+storage_mode("git")
+git_branch("main")
+team_id("7JUQ5ZZTUS")

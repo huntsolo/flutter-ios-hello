@@ -1,0 +1,77 @@
+# ios/fastlane/Fastfile
+# All comments are in English only (as requested).
+# This Fastfile fetches signing from a private match repo, builds a Flutter IPA, and uploads to TestFlight via ASC .p8 key.
+
+default_platform(:ios)
+
+# ======= Configuration (edit to your values) =======
+APP_BUNDLE_ID       = "h-solo-test"                     # Your Bundle ID
+TEAM_ID             = "7JUQ5ZZTUS"                      # Your Apple Developer Team ID
+MATCH_GIT_BRANCH    = "main"                            # Branch of your signing repo
+ASC_KEY_ID          = "RLMFMY76AM"                      # App Store Connect API Key ID
+ASC_ISSUER_ID       = "4420f5b4-46c7-4c02-a532-391041fe7c32" # App Store Connect Issuer ID
+ASC_KEY_PATH        = "./fastlane/AuthKey_RLMFMY76AM.p8"     # Path to your .p8 key (not committed)
+# ===================================================
+
+platform :ios do
+  desc "Fetch signing via match, build Flutter IPA, upload to TestFlight"
+  lane :beta do
+    # Prepare a clean keychain on CI and adjust search path locally.
+    setup_ci
+
+    # Pull certificates and provisioning profiles from the private repo (read-only on CI).
+    # Requires: MATCH_PASSWORD env var and SSH access to the signing repo.
+    match(
+      type: "appstore",
+      readonly: true,
+      app_identifier: [APP_BUNDLE_ID],
+      git_branch: MATCH_GIT_BRANCH
+    )
+
+    # Keep Xcode in automatic signing mode (simple and reliable with match-managed identities).
+    automatic_code_signing(
+      path: "Runner.xcodeproj",
+      use_automatic_signing: true,
+      team_id: TEAM_ID,
+      targets: ["Runner"]
+    )
+
+    # Build the IPA via Flutter. Artifact will be written to <project_root>/build/ios/ipa/*.ipa
+    sh("flutter --version")
+    sh("flutter clean")
+    sh("flutter pub get")
+    sh("flutter build ipa --release")
+
+    # Resolve absolute path to the newest IPA produced by Flutter.
+    project_root = File.expand_path("../..", __dir__) # Fastfile lives in ios/fastlane
+    ipa_candidates = Dir["#{project_root}/build/ios/ipa/*.ipa"]
+    UI.user_error!("IPA(s) not found in #{project_root}/build/ios/ipa") if ipa_candidates.empty?
+    ipa_path = ipa_candidates.max_by { |f| File.mtime(f) }
+    UI.message("Uploading IPA: #{ipa_path}")
+
+    # Use App Store Connect API key from .p8 (safer than embedding JSON).
+    api_key = app_store_connect_api_key(
+      key_id: ASC_KEY_ID,
+      issuer_id: ASC_ISSUER_ID,
+      key_filepath: ASC_KEY_PATH,
+      in_house: false
+    )
+
+    # Upload to TestFlight.
+    pilot(
+      api_key: api_key,
+      ipa: ipa_path,
+      skip_waiting_for_build_processing: true,
+      distribute_external: false,
+      notify_external_testers: false
+    )
+  end
+
+  desc "Create/refresh signing in the match repo (run locally, not in CI)"
+  lane :provision_all do
+    # This lane will update (or create) certificates and profiles and push them to the signing repo.
+    # Make sure MATCH_PASSWORD is set and you have write access to the repo.
+    match(type: "development", readonly: false, app_identifier: [APP_BUNDLE_ID], git_branch: MATCH_GIT_BRANCH)
+    match(type: "appstore",    readonly: false, app_identifier: [APP_BUNDLE_ID], git_branch: MATCH_GIT_BRANCH)
+  end
+end
