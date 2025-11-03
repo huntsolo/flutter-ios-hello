@@ -5,26 +5,58 @@ require "shellwords"
 default_platform(:ios)
 
 # ===== Configuration =====
-APP_BUNDLE_ID    = "h-solo-test"
-TEAM_ID          = "7JUQ5ZZTUS"
-MATCH_GIT_BRANCH = "main"
+APP_BUNDLE_ID    = "h-solo-test"                           # Bundle ID
+TEAM_ID          = "7JUQ5ZZTUS"                            # Apple Developer Team ID
+MATCH_GIT_BRANCH = "main"                                  # Branch of signing repo
 
-ASC_KEY_ID       = "RLMFMY76AM"
-ASC_ISSUER_ID    = "4420f5b4-46c7-4c02-a532-391041fe7c32"
-ASC_KEY_PATH     = "./fastlane/AuthKey_RLMFMY76AM.p8"
+ASC_KEY_ID       = "RLMFMY76AM"                            # App Store Connect API Key ID
+ASC_ISSUER_ID    = "4420f5b4-46c7-4c02-a532-391041fe7c32"  # App Store Connect Issuer ID
+ASC_KEY_PATH     = "./fastlane/AuthKey_RLMFMY76AM.p8"      # Path to .p8 (do not commit)
 
-GIT_REMOTE_NAME  = "origin"
-TAG_PREFIX       = "ios"
+GIT_REMOTE_NAME  = "origin"                                # Remote to push tags
+TAG_PREFIX       = "ios"                                   # Tag prefix, e.g. ios-v1.0.0-b42
+
+# Preferred TestFlight locales for "What to Test"
+ITC_LOCALES = (ENV['ITC_LOCALES'] || 'en-GB').split(',').map(&:strip)
 # ========================
 
-platform :ios do
-  desc "Fetch signing, bump build, build IPA, upload to TestFlight, tag & push"
-  lane :beta do
-    project_root = File.expand_path("../..", __dir__) # Fastfile lives in ios/fastlane
-    root_escaped = Shellwords.escape(project_root)
+# Helper: set TF changelog (What to Test) for given locales with retry
+def set_tf_changelog_for_locales(app_id:, version:, build:, text:, locales:, max_retries: 30, sleep_sec: 10)
+  locales.each do |loc|
+    retries = max_retries
+    begin
+      with_env_values('FASTLANE_ITC_LANGUAGE' => loc) do
+        update_testflight_build_information(
+          app_identifier: app_id,
+          version: version,
+          build_number: build,
+          changelog: text
+        )
+      end
+      UI.success("Set TestFlight changelog for locale #{loc}")
+    rescue => e
+      if e.to_s =~ /could not find build/i || e.to_s =~ /No build found/i
+        raise if (retries -= 1) <= 0
+        UI.message("Build not visible yet for locale #{loc}, retrying in #{sleep_sec}s (#{retries} left)...")
+        sleep sleep_sec
+        retry
+      else
+        raise
+      end
+    end
+  end
+end
 
+platform :ios do
+  desc "Fetch signing, bump build, build IPA, upload to TestFlight, set localized changelog, tag & push"
+  lane :beta do
+    project_root  = File.expand_path("../..", __dir__) # Fastfile lives in ios/fastlane
+    root_escaped  = Shellwords.escape(project_root)
+
+    # Prepare keychain on CI
     setup_ci
 
+    # Pull signing from private repo (read-only on CI); requires MATCH_PASSWORD and git access
     match(
       type: "appstore",
       readonly: true,
@@ -32,6 +64,7 @@ platform :ios do
       git_branch: MATCH_GIT_BRANCH
     )
 
+    # Keep automatic signing (match will install certs/profiles into keychain)
     automatic_code_signing(
       path: "Runner.xcodeproj",
       use_automatic_signing: true,
@@ -45,11 +78,13 @@ platform :ios do
     build   = get_build_number(xcodeproj: "Runner.xcodeproj")
     UI.message("Building version #{version} (build #{build})")
 
+    # Build IPA via Flutter (artifact goes to <project_root>/build/ios/ipa)
     sh("flutter --version")
     sh("flutter clean")
     sh("flutter pub get")
     sh("flutter build ipa --release")
 
+    # Resolve newest IPA
     ipa_candidates = Dir["#{project_root}/build/ios/ipa/*.ipa"]
     UI.user_error!("IPA(s) not found in #{project_root}/build/ios/ipa") if ipa_candidates.empty?
     ipa_path = ipa_candidates.max_by { |f| File.mtime(f) }
@@ -70,29 +105,36 @@ platform :ios do
       in_house: false
     )
 
-    # Tag name used both in changelog and later tagging
-    tag_name = "#{TAG_PREFIX}-v#{version}-b#{build}"
+    tag_name       = "#{TAG_PREFIX}-v#{version}-b#{build}"
+    changelog_text = "Tag: #{tag_name}\nCommit: #{sha}"
 
-    # Upload to TestFlight (note the comma before changelog!)
+    # Upload to TestFlight; wait for the build to appear in the TF list
     pilot(
       api_key: api_key,
       ipa: ipa_path,
-      skip_waiting_for_build_processing: true,
+      skip_waiting_for_build_processing: true,  # do not wait full processing
+      wait_for_uploaded_build: true,            # but wait until the build is visible
       distribute_external: false,
-      notify_external_testers: false,
-      changelog: "Tag: #{tag_name}\nCommit: #{sha}"
+      notify_external_testers: false
+      # We set changelog after this call for all locales via update_testflight_build_information
     )
 
-    # Create and push git tag from repo root
+    # Set "What to Test" in desired locales
+    set_tf_changelog_for_locales(
+      app_id: APP_BUNDLE_ID,
+      version: version,
+      build: build,
+      text: changelog_text,
+      locales: ITC_LOCALES
+    )
+
+    # Create and push git tag from repo root (works even when lane runs from ios/)
     if ENV["SKIP_TAG"] == "1"
       UI.important("Skipping git tag: SKIP_TAG=1")
     elsif File.directory?(File.join(project_root, ".git"))
       # Ensure git identity (useful on CI)
       sh("git -C #{root_escaped} config user.email || git -C #{root_escaped} config user.email 'ci@local'")
       sh("git -C #{root_escaped} config user.name  || git -C #{root_escaped} config user.name  'CI'")
-
-      # Optionally commit build bump (uncomment to persist)
-      # sh(\"git -C #{root_escaped} add ios/Runner.xcodeproj/project.pbxproj && git -C #{root_escaped} commit -m #{Shellwords.escape("ci: bump build to #{build} [skip ci]")} || true\")
 
       msg = "fastlane ios beta v#{version} (#{build})"
       sh("git -C #{root_escaped} tag -a #{Shellwords.escape(tag_name)} -m #{Shellwords.escape(msg)} || true")
