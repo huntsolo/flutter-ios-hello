@@ -1,28 +1,30 @@
 # ios/fastlane/Fastfile
-# All comments are in English only.
-# This Fastfile pulls signing from a private match repo, increments build number,
-# builds a Flutter IPA, uploads to TestFlight (ASC .p8), then creates and pushes a git tag.
+
+require "shellwords"
 
 default_platform(:ios)
 
-# ======= Configuration (edit to your values) =======
-APP_BUNDLE_ID       = "h-solo-test"                          # Your Bundle ID
-TEAM_ID             = "7JUQ5ZZTUS"                           # Your Apple Developer Team ID
-MATCH_GIT_BRANCH    = "main"                                 # Branch of your signing repo
-ASC_KEY_ID          = "RLMFMY76AM"                           # App Store Connect API Key ID
-ASC_ISSUER_ID       = "4420f5b4-46c7-4c02-a532-391041fe7c32" # App Store Connect Issuer ID
-ASC_KEY_PATH        = "./fastlane/AuthKey_RLMFMY76AM.p8"     # Path to your .p8 key (not committed)
-GIT_REMOTE_NAME     = "origin"                                # Remote to push tags to
-TAG_PREFIX          = "ios"                                   # Prefix for release tags
-# ===================================================
+# ===== Configuration =====
+APP_BUNDLE_ID    = "h-solo-test"
+TEAM_ID          = "7JUQ5ZZTUS"
+MATCH_GIT_BRANCH = "main"
+
+ASC_KEY_ID       = "RLMFMY76AM"
+ASC_ISSUER_ID    = "4420f5b4-46c7-4c02-a532-391041fe7c32"
+ASC_KEY_PATH     = "./fastlane/AuthKey_RLMFMY76AM.p8"
+
+GIT_REMOTE_NAME  = "origin"
+TAG_PREFIX       = "ios"
+# ========================
 
 platform :ios do
-  desc "Fetch signing, bump build, build IPA with Flutter, upload to TestFlight, tag and push"
+  desc "Fetch signing, bump build, build IPA, upload to TestFlight, tag & push"
   lane :beta do
-    # Prepare a clean keychain on CI and adjust search path locally.
+    project_root = File.expand_path("../..", __dir__) # Fastfile lives in ios/fastlane
+    root_escaped = Shellwords.escape(project_root)
+
     setup_ci
 
-    # Fetch certificates and provisioning profiles from the private repo (read-only on CI).
     match(
       type: "appstore",
       readonly: true,
@@ -30,7 +32,6 @@ platform :ios do
       git_branch: MATCH_GIT_BRANCH
     )
 
-    # Keep Xcode in automatic signing mode (simple and reliable with match-managed identities).
     automatic_code_signing(
       path: "Runner.xcodeproj",
       use_automatic_signing: true,
@@ -38,29 +39,30 @@ platform :ios do
       targets: ["Runner"]
     )
 
-    # -------- Increment build number BEFORE the build --------
+    # Bump build BEFORE building
     increment_build_number(xcodeproj: "Runner.xcodeproj")
-
-    # Read current marketing version and the just-incremented build number.
     version = get_version_number(xcodeproj: "Runner.xcodeproj", target: "Runner")
     build   = get_build_number(xcodeproj: "Runner.xcodeproj")
-
     UI.message("Building version #{version} (build #{build})")
 
-    # Build the IPA via Flutter. Artifact will be written to <project_root>/build/ios/ipa/*.ipa
     sh("flutter --version")
     sh("flutter clean")
     sh("flutter pub get")
     sh("flutter build ipa --release")
 
-    # Resolve absolute path to the newest IPA produced by Flutter.
-    project_root = File.expand_path("../..", __dir__) # Fastfile lives in ios/fastlane
     ipa_candidates = Dir["#{project_root}/build/ios/ipa/*.ipa"]
     UI.user_error!("IPA(s) not found in #{project_root}/build/ios/ipa") if ipa_candidates.empty?
     ipa_path = ipa_candidates.max_by { |f| File.mtime(f) }
     UI.message("Uploading IPA: #{ipa_path}")
 
-    # Use App Store Connect API key from .p8 (safer than embedding JSON).
+    # Git info for changelog
+    sha = if File.directory?(File.join(project_root, ".git"))
+            sh("git -C #{root_escaped} rev-parse --short HEAD").strip
+          else
+            "n/a"
+          end
+
+    # ASC API key from .p8
     api_key = app_store_connect_api_key(
       key_id: ASC_KEY_ID,
       issuer_id: ASC_ISSUER_ID,
@@ -68,31 +70,40 @@ platform :ios do
       in_house: false
     )
 
-    # Upload to TestFlight.
+    # Tag name used both in changelog and later tagging
+    tag_name = "#{TAG_PREFIX}-v#{version}-b#{build}"
+
+    # Upload to TestFlight (note the comma before changelog!)
     pilot(
       api_key: api_key,
       ipa: ipa_path,
       skip_waiting_for_build_processing: true,
       distribute_external: false,
-      notify_external_testers: false
+      notify_external_testers: false,
+      changelog: "Tag: #{tag_name}\nCommit: #{sha}"
     )
 
-    # -------- Create and push a git tag for this release --------
-    # Tag format: ios-v<marketing_version>-b<build_number>, e.g., ios-v1.0.0-b42
-    tag_name = "#{TAG_PREFIX}-v#{version}-b#{build}"
-    UI.message("Tagging release: #{tag_name}")
-    add_git_tag(
-      tag: tag_name,
-      force: false
-    )
-    push_git_tags(
-      local_branch: nil,
-      remote: GIT_REMOTE_NAME,
-      tag: tag_name
-    )
+    # Create and push git tag from repo root
+    if ENV["SKIP_TAG"] == "1"
+      UI.important("Skipping git tag: SKIP_TAG=1")
+    elsif File.directory?(File.join(project_root, ".git"))
+      # Ensure git identity (useful on CI)
+      sh("git -C #{root_escaped} config user.email || git -C #{root_escaped} config user.email 'ci@local'")
+      sh("git -C #{root_escaped} config user.name  || git -C #{root_escaped} config user.name  'CI'")
+
+      # Optionally commit build bump (uncomment to persist)
+      # sh(\"git -C #{root_escaped} add ios/Runner.xcodeproj/project.pbxproj && git -C #{root_escaped} commit -m #{Shellwords.escape("ci: bump build to #{build} [skip ci]")} || true\")
+
+      msg = "fastlane ios beta v#{version} (#{build})"
+      sh("git -C #{root_escaped} tag -a #{Shellwords.escape(tag_name)} -m #{Shellwords.escape(msg)} || true")
+      sh("git -C #{root_escaped} push #{Shellwords.escape(GIT_REMOTE_NAME)} #{Shellwords.escape(tag_name)} || true")
+      UI.success("Pushed tag #{tag_name} to #{GIT_REMOTE_NAME}")
+    else
+      UI.important("Skipping git tag: #{project_root} is not a git repository")
+    end
   end
 
-  desc "Create/refresh signing in the match repo (run locally, not in CI)"
+  desc "Create/refresh signing in the match repo (run locally)"
   lane :provision_all do
     match(type: "development", readonly: false, app_identifier: [APP_BUNDLE_ID], git_branch: MATCH_GIT_BRANCH)
     match(type: "appstore",    readonly: false, app_identifier: [APP_BUNDLE_ID], git_branch: MATCH_GIT_BRANCH)

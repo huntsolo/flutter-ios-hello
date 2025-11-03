@@ -21,7 +21,7 @@ For _fastlane_ installation instructions, see [Installing _fastlane_](https://do
 [bundle exec] fastlane ios beta
 ```
 
-Fetch signing, bump build, build IPA with Flutter, upload to TestFlight, tag and push
+Fetch signing, bump build, build IPA, upload to TestFlight, tag & push
 
 ### ios provision_all
 
@@ -29,7 +29,7 @@ Fetch signing, bump build, build IPA with Flutter, upload to TestFlight, tag and
 [bundle exec] fastlane ios provision_all
 ```
 
-Create/refresh signing in the match repo (run locally, not in CI)
+Create/refresh signing in the match repo (run locally)
 
 ----
 
