@@ -17,46 +17,27 @@ GIT_REMOTE_NAME  = "origin"                                # Remote to push tags
 TAG_PREFIX       = "ios"                                   # Tag prefix, e.g. ios-v1.0.0-b42
 
 # Preferred TestFlight locales for "What to Test"
+# Only the FIRST locale will be used here (pilot sets a single locale per upload)
 ITC_LOCALES = (ENV['ITC_LOCALES'] || 'en-GB').split(',').map(&:strip)
 # ========================
 
-# Helper: set TF changelog (What to Test) for given locales with retry
-def set_tf_changelog_for_locales(app_id:, version:, build:, text:, locales:, max_retries: 30, sleep_sec: 10)
-  locales.each do |loc|
-    retries = max_retries
-    begin
-      with_env_values('FASTLANE_ITC_LANGUAGE' => loc) do
-        update_testflight_build_information(
-          app_identifier: app_id,
-          version: version,
-          build_number: build,
-          changelog: text
-        )
-      end
-      UI.success("Set TestFlight changelog for locale #{loc}")
-    rescue => e
-      if e.to_s =~ /could not find build/i || e.to_s =~ /No build found/i
-        raise if (retries -= 1) <= 0
-        UI.message("Build not visible yet for locale #{loc}, retrying in #{sleep_sec}s (#{retries} left)...")
-        sleep sleep_sec
-        retry
-      else
-        raise
-      end
-    end
-  end
+# Helper: temporarily set FASTLANE_ITC_LANGUAGE
+def with_itc_language(locale)
+  prev = ENV['FASTLANE_ITC_LANGUAGE']
+  ENV['FASTLANE_ITC_LANGUAGE'] = locale
+  yield
+ensure
+  prev.nil? ? ENV.delete('FASTLANE_ITC_LANGUAGE') : ENV['FASTLANE_ITC_LANGUAGE'] = prev
 end
 
 platform :ios do
-  desc "Fetch signing, bump build, build IPA, upload to TestFlight, set localized changelog, tag & push"
+  desc "Fetch signing, bump build, build IPA, upload to TestFlight with localized changelog, tag & push"
   lane :beta do
     project_root  = File.expand_path("../..", __dir__) # Fastfile lives in ios/fastlane
     root_escaped  = Shellwords.escape(project_root)
 
-    # Prepare keychain on CI
     setup_ci
 
-    # Pull signing from private repo (read-only on CI); requires MATCH_PASSWORD and git access
     match(
       type: "appstore",
       readonly: true,
@@ -64,7 +45,6 @@ platform :ios do
       git_branch: MATCH_GIT_BRANCH
     )
 
-    # Keep automatic signing (match will install certs/profiles into keychain)
     automatic_code_signing(
       path: "Runner.xcodeproj",
       use_automatic_signing: true,
@@ -78,13 +58,12 @@ platform :ios do
     build   = get_build_number(xcodeproj: "Runner.xcodeproj")
     UI.message("Building version #{version} (build #{build})")
 
-    # Build IPA via Flutter (artifact goes to <project_root>/build/ios/ipa)
+    # Build IPA via Flutter
     sh("flutter --version")
     sh("flutter clean")
     sh("flutter pub get")
     sh("flutter build ipa --release")
 
-    # Resolve newest IPA
     ipa_candidates = Dir["#{project_root}/build/ios/ipa/*.ipa"]
     UI.user_error!("IPA(s) not found in #{project_root}/build/ios/ipa") if ipa_candidates.empty?
     ipa_path = ipa_candidates.max_by { |f| File.mtime(f) }
@@ -97,7 +76,6 @@ platform :ios do
             "n/a"
           end
 
-    # ASC API key from .p8
     api_key = app_store_connect_api_key(
       key_id: ASC_KEY_ID,
       issuer_id: ASC_ISSUER_ID,
@@ -108,31 +86,24 @@ platform :ios do
     tag_name       = "#{TAG_PREFIX}-v#{version}-b#{build}"
     changelog_text = "Tag: #{tag_name}\nCommit: #{sha}"
 
-    # Upload to TestFlight; wait for the build to appear in the TF list
-    pilot(
-      api_key: api_key,
-      ipa: ipa_path,
-      skip_waiting_for_build_processing: true,  # do not wait full processing
-      wait_for_uploaded_build: true,            # but wait until the build is visible
-      distribute_external: false,
-      notify_external_testers: false
-      # We set changelog after this call for all locales via update_testflight_build_information
-    )
+    # Upload to TestFlight in the desired locale and set “What to Test”
+    target_locale = ITC_LOCALES.first || 'en-GB'
+    with_itc_language(target_locale) do
+      pilot(
+        api_key: api_key,
+        ipa: ipa_path,
+        # pilot will wait for the build to appear if `changelog` is supplied
+        skip_waiting_for_build_processing: true,
+        distribute_external: false,
+        notify_external_testers: false,
+        changelog: changelog_text
+      )
+    end
 
-    # Set "What to Test" in desired locales
-    set_tf_changelog_for_locales(
-      app_id: APP_BUNDLE_ID,
-      version: version,
-      build: build,
-      text: changelog_text,
-      locales: ITC_LOCALES
-    )
-
-    # Create and push git tag from repo root (works even when lane runs from ios/)
+    # Create and push git tag
     if ENV["SKIP_TAG"] == "1"
       UI.important("Skipping git tag: SKIP_TAG=1")
     elsif File.directory?(File.join(project_root, ".git"))
-      # Ensure git identity (useful on CI)
       sh("git -C #{root_escaped} config user.email || git -C #{root_escaped} config user.email 'ci@local'")
       sh("git -C #{root_escaped} config user.name  || git -C #{root_escaped} config user.name  'CI'")
 

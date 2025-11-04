@@ -21,7 +21,7 @@ For _fastlane_ installation instructions, see [Installing _fastlane_](https://do
 [bundle exec] fastlane ios beta
 ```
 
-Fetch signing, bump build, build IPA, upload to TestFlight, tag & push
+Fetch signing, bump build, build IPA, upload to TestFlight with localized changelog, tag & push
 
 ### ios provision_all
 
